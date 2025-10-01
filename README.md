@@ -3,6 +3,24 @@
 cd ..
 python BenchMARL/simulation_and_training_in_vmas_and_benchmarl.py
 ```
+To set up:
+```bash
+conda env create -f updated_xai_gnn_libs.yaml
+```
+Then clone repo locally to access the configs and scripts
+```bash
+git clone https://github.com/sivakailas/BenchMARL.git
+pip install -e BenchMARL
+```
+#### Install environments
+
+All enviornment dependencies are optional in BenchMARL and can be installed separately.
+
+##### VMAS
+
+```bash
+pip install vmas
+```
 
 ![BenchMARL](https://raw.githubusercontent.com/matteobettini/benchmarl_sphinx_theme/master/benchmarl_sphinx_theme/static/img/benchmarl.png?raw=true)
 
