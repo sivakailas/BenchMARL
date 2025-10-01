@@ -142,6 +142,7 @@ class Gnn(Model):
         self.edge_radius = edge_radius
         self.pos_features = pos_features
         self.vel_features = vel_features
+        self.cache_graph = None
 
         super().__init__(**kwargs)
 
@@ -323,6 +324,7 @@ class Gnn(Model):
             self_loops=self.self_loops,
             edge_radius=self.edge_radius,
         )
+        self.cache_graph = graph
         forward_gnn_params = {
             "x": graph.x,
             "edge_index": graph.edge_index,

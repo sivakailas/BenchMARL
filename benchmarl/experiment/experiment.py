@@ -50,6 +50,7 @@ _has_hydra = importlib.util.find_spec("hydra") is not None
 if _has_hydra:
     from hydra.core.hydra_config import HydraConfig
 
+from torch_geometric.data import Data
 
 @dataclass
 class ExperimentConfig:
@@ -903,6 +904,14 @@ class Experiment(CallbackNotifier):
                     video_frames.append(
                         self.task.__class__.render_callback(self, env, td)
                     )
+                    if hasattr(env, "gnn_exp") == True and env.gnn_exp == True:
+                        torch.set_grad_enabled(True)
+                        data = Data(x=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.x, edge_index=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.edge_index)
+                        explanation_features = env.explainer_features(data.x, data.edge_index)
+                        node_mask = explanation_features.get('node_mask')
+                        edge_mask = explanation_features.get('edge_mask')
+                        print(node_mask)
+                        print(edge_mask)
 
             else:
                 video_frames = None
