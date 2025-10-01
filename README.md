@@ -6,6 +6,7 @@ python BenchMARL/simulation_and_training_in_vmas_and_benchmarl.py
 To set up:
 ```bash
 conda env create -f updated_xai_gnn_libs.yaml
+conda activate updated_xai_gnn_libs_v2
 ```
 Then clone repo locally to access the configs and scripts
 ```bash
