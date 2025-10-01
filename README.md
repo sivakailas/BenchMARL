@@ -1,4 +1,4 @@
-# Note: Run simulation_and_training_in_vmas_and_benchmarl.py from outside the repo directory as shown below
+### Note: Run simulation_and_training_in_vmas_and_benchmarl.py from outside the repo directory as shown below
 ```bash
 cd ..
 python BenchMARL/simulation_and_training_in_vmas_and_benchmarl.py
