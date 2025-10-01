@@ -1,0 +1,22 @@
+name: updated_xai_gnn_libs_v2
+channels:
+  - defaults
+dependencies:
+  - python
+  - pip
+  - tqdm
+  - matplotlib
+  - Ipython
+  - seaborn
+  - scipy
+  - pip:
+    - pyvirtualdisplay
+    - torchrl
+    - tensordict
+    - torch_geometric
+    - torchvision
+    - swig
+    - wandb
+    - moviepy
+    - hydra-core
+    - imageio
