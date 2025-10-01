@@ -1126,6 +1126,11 @@ elif train_or_eval == 'EVAL':
         callbacks=[MyCallbackB()]
     )
 
+    for param in experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0].parameters():
+        param.requires_grad = False
+    
+    policy_to_explain = copy.deepcopy(experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0])
+
 
     from torch_geometric.explain import Explainer, GNNExplainer, DummyExplainer, GraphMaskExplainer, AttentionExplainer
 
@@ -1133,7 +1138,7 @@ elif train_or_eval == 'EVAL':
 
     if explainer_method == 'GraphMask':
         explainer_features = Explainer(
-            model=experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0],
+            model=policy_to_explain,
             algorithm=GraphMaskExplainer(1),
             explanation_type='model',
             node_mask_type='object',
@@ -1145,7 +1150,7 @@ elif train_or_eval == 'EVAL':
         )
     elif explainer_method == 'GNNExplainer':
         explainer_features = Explainer(
-            model=experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0],
+            model=policy_to_explain,
             algorithm=GNNExplainer(),
             explanation_type='model',
             node_mask_type='object',
@@ -1157,7 +1162,7 @@ elif train_or_eval == 'EVAL':
         )
     elif explainer_method == 'AttentionExplainer':
         explainer_features = Explainer(
-            model=experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0],
+            model=policy_to_explain,
             algorithm=AttentionExplainer(reduce='mean'),
             explanation_type='model',
             node_mask_type=None,
