@@ -758,7 +758,7 @@ experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized 
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
-experiment_config.render = True
+experiment_config.render = False
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.evaluation_interval = 120_000 # Interval in terms of frames, will evaluate every 120_000 / 60_000 = 2 iterations
 experiment_config.evaluation_episodes = 200 # Number of vmas vectorized enviornemnts used in evaluation

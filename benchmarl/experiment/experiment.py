@@ -899,23 +899,22 @@ class Experiment(CallbackNotifier):
         ):
             if self.task.has_render(self.test_env) and self.config.render:
                 video_frames = []
-
-                def callback(env, td):
+            else:
+                video_frames = None
+                # callback = None
+            def callback(env, td):
+                if self.task.has_render(self.test_env) and self.config.render and video_frames is not None:
                     video_frames.append(
                         self.task.__class__.render_callback(self, env, td)
                     )
-                    if hasattr(env, "gnn_exp") == True and env.gnn_exp == True:
-                        torch.set_grad_enabled(True)
-                        data = Data(x=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.x, edge_index=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.edge_index)
-                        explanation_features = env.explainer_features(data.x, data.edge_index)
-                        node_mask = explanation_features.get('node_mask')
-                        edge_mask = explanation_features.get('edge_mask')
-                        print(node_mask)
-                        print(edge_mask)
-
-            else:
-                video_frames = None
-                callback = None
+                if hasattr(env, "gnn_exp") == True and env.gnn_exp == True:
+                    torch.set_grad_enabled(True)
+                    data = Data(x=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.x, edge_index=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.edge_index)
+                    explanation_features = env.explainer_features(data.x, data.edge_index)
+                    node_mask = explanation_features.get('node_mask')
+                    edge_mask = explanation_features.get('edge_mask')
+                    print(node_mask)
+                    print(edge_mask)
 
             if self.test_env.batch_size == ():
                 rollouts = []
