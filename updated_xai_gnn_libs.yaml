@@ -13,10 +13,12 @@ dependencies:
     - pyvirtualdisplay
     - torchrl
     - tensordict
-    - torch_geometric
     - torchvision
     - swig
     - wandb
     - moviepy
     - hydra-core
     - imageio
+    - pyg-nightly
+    - transformers
+
