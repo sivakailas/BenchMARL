@@ -1,4 +1,4 @@
-name: updated_xai_gnn_libs_v2
+name: gnn
 channels:
   - defaults
 dependencies:

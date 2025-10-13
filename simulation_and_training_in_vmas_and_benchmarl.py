@@ -27,13 +27,14 @@ The best way to learn how VMAS works is to implement your own scenario, which is
 ## Installing depdendencies
 """
 
-# # @title Rendering dependencies
-# !apt-get update
-# !apt-get install -y x11-utils python3-opengl xvfb
-# !pip install pyvirtualdisplay
-# import pyvirtualdisplay
-# display = pyvirtualdisplay.Display(visible=False, size=(1400, 900))
-# display.start()
+# @title Rendering dependencies
+# System dependencies (install manually if needed):
+# apt-get update
+# apt-get install -y x11-utils python3-opengl xvfb
+# pip install pyvirtualdisplay
+
+# Rendering setup - use run_with_display.sh wrapper script for proper display configuration
+# The wrapper sets DISPLAY and environment variables before Python starts
 
 # # @title Install vmas
 # !pip install vmas
@@ -758,7 +759,7 @@ experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized 
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
-experiment_config.render = False
+experiment_config.render = True  # Rendering enabled (use run_with_display.sh wrapper script)
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.evaluation_interval = 120_000 # Interval in terms of frames, will evaluate every 120_000 / 60_000 = 2 iterations
 experiment_config.evaluation_episodes = 200 # Number of vmas vectorized enviornemnts used in evaluation
@@ -1133,6 +1134,7 @@ elif train_or_eval == 'EVAL':
 
 
     from torch_geometric.explain import Explainer, GNNExplainer, DummyExplainer, GraphMaskExplainer, AttentionExplainer
+    from torch_geometric.data import Data
 
     explainer_method = input('Select the explainer method (GraphMask, GNNExplainer, AttentionExplainer): ')
 
@@ -1180,6 +1182,64 @@ elif train_or_eval == 'EVAL':
 
     experiment.test_env.explainer_features = explainer_features
     experiment.test_env.gnn_exp = True
+    
+    # Setup LLM to interpret explainer features
+    use_llm = input('\nDo you want to use LLM to interpret explainer features? (yes/no): ').strip().lower()
+    
+    if use_llm == 'yes':
+        llm_choice = input('Choose LLM: (1) OpenAI API, (2) Local Ollama, (3) Skip: ')
+        
+        if llm_choice == '1':
+            # OpenAI API
+            import os
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                api_key = input('Enter your OpenAI API key: ').strip()
+                os.environ['OPENAI_API_KEY'] = api_key
+            
+            try:
+                import openai
+                openai.api_key = api_key
+                experiment.test_env.llm_client = openai
+                experiment.test_env.llm_model = "gpt-4o-mini"
+                experiment.test_env.use_llm = True
+                print(f"✓ OpenAI LLM configured (model: gpt-4o-mini)")
+            except ImportError:
+                print("! Install openai: pip install openai")
+                experiment.test_env.use_llm = False
+                
+        elif llm_choice == '2':
+            # Local Ollama
+            try:
+                import requests
+                # Test Ollama connection
+                response = requests.get('http://localhost:11434/api/tags')
+                if response.status_code == 200:
+                    # List available models
+                    models = response.json().get('models', [])
+                    if models:
+                        print(f"Available models: {[m['name'] for m in models]}")
+                        model_choice = input(f"Enter model name (or press Enter for 'llama2'): ").strip() or 'llama2'
+                    else:
+                        model_choice = 'llama2'
+                    
+                    experiment.test_env.llm_client = 'ollama'
+                    experiment.test_env.llm_model = model_choice
+                    experiment.test_env.use_llm = True
+                    print(f"✓ Ollama LLM configured (model: {model_choice})")
+                else:
+                    print("! Ollama not running. Start with: ollama serve")
+                    experiment.test_env.use_llm = False
+            except:
+                print("! Ollama not available. Install: https://ollama.ai")
+                experiment.test_env.use_llm = False
+        else:
+            experiment.test_env.use_llm = False
+    else:
+        experiment.test_env.use_llm = False
+    
+    if not experiment.test_env.use_llm:
+        print("\nLLM disabled. Explainer will show node_mask and edge_mask values.\n")
 
     experiment.evaluate()
 else:
