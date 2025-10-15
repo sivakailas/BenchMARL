@@ -915,6 +915,10 @@ class Experiment(CallbackNotifier):
                     edge_mask = explanation_features.get('edge_mask')
                     print(node_mask)
                     print(edge_mask)
+                    print('obs (pos, vel, goal pose): ', td['holonomic']['observation']['obs'].tolist())
+                    print('pos: ', td['holonomic']['observation']['pos'].tolist())
+                    print('vel: ', td['holonomic']['observation']['vel'].tolist())
+                    print('action: ', td['holonomic']['action'].tolist())
 
             if self.test_env.batch_size == ():
                 rollouts = []
