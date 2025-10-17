@@ -3,16 +3,27 @@
 cd ..
 python BenchMARL/simulation_and_training_in_vmas_and_benchmarl.py
 ```
-To set up:
+To set up, first clone repo locally to access the configs and scripts:
 ```bash
+git clone https://github.com/sivakailas/BenchMARL.git
+cd BenchMARL
 conda env create -f updated_xai_gnn_libs.yaml
 conda activate updated_xai_gnn_libs_v2
 ```
-Then clone repo locally to access the configs and scripts
+Then install packages and repo
 ```bash
-git clone https://github.com/sivakailas/BenchMARL.git
+cd ..
+apt-get update
+apt-get install -y x11-utils python3-opengl xvfb
+pip install pyvirtualdisplay
 pip install -e BenchMARL
 ```
+Run script
+```bash
+python BenchMARL/simulation_and_training_in_vmas_and_benchmarl.py
+```
+Note: for setup on WSL2 (Windows Subsystem for Linux), consider adjusting pyglet version to avoid pyglet.gl.ContextException: Could not create GL context error (I found that pyglet==1.4.3 and pyglet==1.4.11 worked, so perhaps pyglet==1.4.x will work in general).
+
 #### Install environments
 
 All enviornment dependencies are optional in BenchMARL and can be installed separately.
