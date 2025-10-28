@@ -373,6 +373,11 @@ class Experiment(CallbackNotifier):
         self.total_frames = 0
         self.n_iters_performed = 0
         self.mean_return = 0
+        self.accumulated_node_mask = None
+        self.accumulated_edge_mask = None
+        self.mask_count = 0
+        self.accumulated_states = []
+        self.accumulated_actions = []
 
         if self.config.restore_file is not None:
             self._load_experiment()
@@ -663,12 +668,207 @@ class Experiment(CallbackNotifier):
     def evaluate(self):
         """Run just the evaluation loop once."""
         seed_everything(self.seed)
+        print("\n" + "="*60)
+        print("ENVIRONMENT SPACES:")
+        print("="*60)
+        print("="*60 + "\n")
+
         self._evaluation_loop()
+
+        if self.mask_count > 0:
+            print("\n" + "="*60)
+            print(f"ACCUMULATED MASKS (total over {self.mask_count} timesteps):")
+            print("="*60)
+            print("="*60 + "\n")
+            
+            # Check if LLM is available from test environment
+            if hasattr(self.test_env, "use_llm") and self.test_env.use_llm and hasattr(self.test_env, "llm_client"):
+                try:
+                    print("\n" + "="*60)
+                    print("LLM INTERPRETATION OF ACCUMULATED EXPLAINER FEATURES:")
+                    print("="*60)
+                    
+                    # Convert full accumulated masks to list format for LLM
+                    # node_mask_list = self.accumulated_node_mask.squeeze().tolist() if self.accumulated_node_mask is not None else []
+                    # edge_mask_list = self.accumulated_edge_mask.squeeze().tolist() if self.accumulated_edge_mask is not None else []
+
+                    if self.accumulated_node_mask is not None:
+                        node_mask_tensor = torch.stack(self.accumulated_node_mask)  # [250, 4, 1]
+                        node_mask_list = node_mask_tensor.squeeze(-1).tolist()      # [250, 4]
+                    else:
+                        node_mask_list = []
+
+                    if self.accumulated_edge_mask is not None:
+                        edge_mask_tensor = torch.stack(self.accumulated_edge_mask)  # [250, 12]
+                        edge_mask_list = edge_mask_tensor.squeeze(-1).tolist()      # [250][12]
+                    else:
+                        edge_mask_list = []
+
+                    states = self.accumulated_states
+                    actions = self.accumulated_actions
+          
+                    # Prepare states and actions for prompts
+                    # states = [s.tolist() if hasattr(s, 'tolist') else s for s in self.accumulated_states] if self.accumulated_states else "No states available"
+                    # actions = [a.tolist() if hasattr(a, 'tolist') else a for a in self.accumulated_actions] if self.accumulated_actions else "No actions available"
+                    # if states and actions:
+                    #     print("States and actions are available for prompts.")
+
+                    # accumulated observation tensors
+                    if hasattr(self, "accumulated_obs") and self.accumulated_obs:
+                        obs_tensor = torch.stack(self.accumulated_obs)  # [T, batch, agents, obs_dim]
+                        print(f"Obs stacked shape: {obs_tensor.shape}")
+                        obs_list = obs_tensor.tolist()
+                    else:
+                        obs_tensor, obs_list = None, "No obs available"
+
+                    # accumulated position tensors (we dont need position for prompt, redundant info)
+                    # if hasattr(self, "accumulated_pos") and self.accumulated_pos:
+                    #     pos_tensor = torch.stack(self.accumulated_pos)  # [T, batch, agents, 2]
+                    #     print(f"Pos stacked shape: {pos_tensor.shape}")
+                    #     pos_list = pos_tensor.tolist()
+                    # else:
+                    #     pos_tensor, pos_list = None, "No pos available"
+
+                    # accumulated action tensors 
+                    if hasattr(self, "accumulated_actions") and self.accumulated_actions:
+                        action_tensor = torch.stack(self.accumulated_actions)  # [T, batch, agents, action_dim]
+                        print(f"Action stacked shape: {action_tensor.shape}")
+                        action_list = action_tensor.tolist()
+                    else:
+                        action_tensor, action_list = None, "No actions available"
+
+
+                    # node edge state action
+                    state_action_mask_prompt = f"""Temporal information of agents over 250 timesteps in numerical form provided:
+                    'node_mask_list': importance of the agent accumelated over 250 time steps:
+                    {node_mask_list}
+                    'edge_mask_list': importance of connection between 2 agents accumelated over 250 time steps:
+                    {edge_mask_list}
+                    'obs_list': observation space accumelated over 250 time steps:
+                    {obs_list}
+                    'action_list':action space accumelated over 250 time steps:
+                    {action_list}"""
+
+
+                    question_prompt = """Environment description:
+                    The task considers a team of 4 agents, there are no LIDAR sensors equipped on the agents. 
+                    This means that the agents only observe their own position, velocity, and goal location, 
+                    and that each agent has no information about the other agents from local observations alone. 
+                    Both initial and goal locations are randomized. Thus, effective communication is required to 
+                    solve our blind version of this task.
+                    What shold the LLM generate:
+                    Your task is to explain why a neural network chooses agent 0 to take an action based on the given information. 
+                    In addition, explain agent 0's actions in relation to other agents. The model’s behavior can be understood from 
+                    the following collection of observation and action pairs, given in the format of  arrays (observation, position, action).
+                    
+                    The 'obs_list': row is each agent, since we have 4 agents, we have 4 rows. The first two columns are the x,y position of the agent itself. 
+                    The third and fourth column are the velocity (vectorized). The last two columns are the x,y location of the agent’s goal. 
+                    There are 250 timesteps, hence the shape ([250, 1, 4, 6]), corresponding to 250 timesteps, 4 agents, and 6 observation values.
+                    
+                    The 'action_list': row is each agent, since we have 4 agents, we have 4 rows. 
+                    The columns represent horizontal (x) and vertical (y) motion of the agent.
+                    There are 250 timesteps, hence the shape ([250, 1, 4, 2]), corresponding to 250 timesteps, 4 agents, and 2 action values.
+
+                    The 'node_mask_list': each row is each timestep. Each column is each agent's importance. The higher the number, the more important the agent is in terms 
+                    of the team decision making at that timestep.
+                    There are 250 timesteps, hence the shape ([250, 4]), corresponding to 250 timesteps, 4 agents' importance value
+                    
+                    The 'edge_mask_list': each row is each timestep. Each column is the importance of the connection between 2 agents.
+                    [0,0; 0,1; 0,2; 0,3; 1, 0; 1, 1;...; 3, 3]. The first element is the connection between agent 0 and itself. 
+                    The second element is the connection between agent 0 and agent 1. The same logic goes on.
+                    It is a flattern adjacency matrix.
+                    The higher the number, the more important the connection between the two agents is in terms 
+                    of the team decision making at that timestep.
+                    There are 250 timesteps, hence the shape ([250, 12]), corresponding to 250 timesteps, 12 connections' importance value
+                    """
+                    answer_prompt ="""
+                    Please answer following this template:
+                    Agent {0} started at position {obs_list[0][0][0][:2]} 
+
+                    The agent is taking a {path: direct, long-winded, opposite} path towards its goal at location {obs_list[0][0][0][-2:]} , which is {euclidean distance: obs_list[0][0][0][:2] - obs_list[0][0][0][-2:]} away. 
+
+                    The reason for this navigation choice is because {reason: no obstacle to avoid; other agents are in its way; it is dumb}.
+
+                    Using what we seeing in edge_mask_list, agent x and agent z are in the way of agent 0 at timestep y, therefore ... (generate the rest)
+                    {repeat the above for the agents 1,2,3}
+                    """
+                    # print(f"Questions:\n{question_prompt}\n")
+
+
+                    # Get LLM responses for both prompts
+                    prompts = {
+                        # "Node and Edge mask": node_edge_prompt + "\n\n" + question_prompt,
+                        "WITH State/Action": state_action_mask_prompt + "\n\n" + question_prompt + "\n\n" + answer_prompt,
+                        # "WITHOUT Masks": state_action_no_mask_prompt + "\n\n" + question_prompt,
+                    }
+
+                    for prompt_name, prompt in prompts.items():
+                        print("\n" + "="*60)
+                        print(f"LLM RESPONSE ({prompt_name}):")
+                        print("="*60)
+
+                        # Call LLM based on type
+                        if hasattr(self.test_env.llm_client, 'chat'):
+                            # OpenAI API
+                            response = self.test_env.llm_client.chat.completions.create(
+                                model=self.test_env.llm_model,
+                                messages=[
+                                    {"role": "system", "content": "You are an expert in multi-agent systems and graph neural networks. Provide concise, insightful analysis."},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                
+                                max_tokens=4000,
+                                temperature=0.7
+                            )
+                            llm_response = response.choices[0].message.content
+                        elif self.test_env.llm_client == 'ollama':
+                            # Ollama local
+                            import requests
+                            try:
+                                response = requests.post('http://localhost:11434/api/generate',
+                                    json={
+                                        'model': self.test_env.llm_model,
+                                        'prompt': prompt,
+                                        'stream': False
+                                    },
+                                    timeout=30)
+
+                                if response.status_code == 200:
+                                    result = response.json()
+                                    llm_response = result.get('response', result.get('message', f'Unexpected format: {result}'))
+                                else:
+                                    llm_response = f"Ollama error {response.status_code}: {response.text}"
+                            except requests.exceptions.RequestException as e:
+                                llm_response = f"Ollama connection error: {e}"
+                        elif self.test_env.llm_client == 'torch_geometric':
+                            # PyTorch Geometric LLM wrapper
+                            try:
+                                # Prepend system message to prompt for consistency
+                                full_prompt = "You are an expert in multi-agent systems and graph neural networks. Provide concise, insightful analysis.\n\n" + prompt
+
+                                # Use the LLM.inference() method
+                                result = self.test_env.llm_model.inference(
+                                    question=[full_prompt],
+                                    max_tokens=200
+                                )
+                                llm_response = result[0] if isinstance(result, list) and len(result) > 0 else str(result)
+                            except Exception as e:
+                                llm_response = f"PyTorch Geometric LLM error: {e}"
+                        else:
+                            llm_response = "Unknown LLM client"
+
+                        print(f"{llm_response}\n")
+                        print("="*60 + "\n")
+                    
+                except Exception as e:
+                    print(f"Warning: LLM interpretation failed: {e}\n")
+        
         self.logger.commit()
         print(
             f"Evaluation results logged to loggers={self.config.loggers}"
             f"{' and to a json file in the experiment folder.' if self.config.create_json else ''}"
         )
+        
 
     def _collection_loop(self):
         pbar = tqdm(
@@ -907,14 +1107,41 @@ class Experiment(CallbackNotifier):
                     video_frames.append(
                         self.task.__class__.render_callback(self, env, td)
                     )
+                
+                # ALWAYS accumulate states and actions (with correct keys)
+                if "holonomic" in td.keys():
+                    if "observation" in td["holonomic"].keys():
+                        state = td["holonomic"]["observation"].clone().detach()
+                        self.accumulated_states.append(state)
+                
+                if "holonomic" in td.keys():
+                    if "action" in td["holonomic"].keys():
+                        action = td["holonomic"]["action"].clone().detach()
+                        self.accumulated_actions.append(action)
+
                 if hasattr(env, "gnn_exp") == True and env.gnn_exp == True:
                     torch.set_grad_enabled(True)
                     data = Data(x=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.x, edge_index=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.edge_index)
                     explanation_features = env.explainer_features(data.x, data.edge_index)
                     node_mask = explanation_features.get('node_mask')
                     edge_mask = explanation_features.get('edge_mask')
-                    print(node_mask)
-                    print(edge_mask)
+                    #EDITED: append this instead of concat
+                    if node_mask is not None:
+                        if self.accumulated_node_mask is None:
+                            self.accumulated_node_mask = [node_mask.clone()]
+                        else:
+                            self.accumulated_node_mask.append(node_mask.clone())
+                    if edge_mask is not None:
+                        if self.accumulated_edge_mask is None:
+                            self.accumulated_edge_mask = [edge_mask.clone()]
+                        else:
+                            self.accumulated_edge_mask.append(edge_mask.clone())
+                    self.mask_count += 1
+
+                    # Accumulate states and actions from tensordict
+
+                    # print(sata)
+
 
             if self.test_env.batch_size == ():
                 rollouts = []
@@ -980,7 +1207,13 @@ class Experiment(CallbackNotifier):
 
         """
         for group in self.group_map.keys():
-            self.losses[group].load_state_dict(state_dict[f"loss_{group}"])
+            # Handle backward compatibility for TorchRL parameter name changes
+            loss_state = state_dict[f"loss_{group}"]
+            if "entropy_coef" in loss_state and "entropy_coeff" not in loss_state:
+                loss_state["entropy_coeff"] = loss_state.pop("entropy_coef")
+            if "critic_coef" in loss_state and "critic_coeff" not in loss_state:
+                loss_state["critic_coeff"] = loss_state.pop("critic_coef")
+            self.losses[group].load_state_dict(loss_state)
             if state_dict[f"buffer_{group}"] is not None:
                 self.replay_buffers[group].load_state_dict(
                     state_dict[f"buffer_{group}"]
