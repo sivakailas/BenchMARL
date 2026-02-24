@@ -27,14 +27,13 @@ The best way to learn how VMAS works is to implement your own scenario, which is
 ## Installing depdendencies
 """
 
-# @title Rendering dependencies
-# System dependencies (install manually if needed):
-# apt-get update
-# apt-get install -y x11-utils python3-opengl xvfb
-# pip install pyvirtualdisplay
-
-# Rendering setup - use run_with_display.sh wrapper script for proper display configuration
-# The wrapper sets DISPLAY and environment variables before Python starts
+# # @title Rendering dependencies
+# !apt-get update
+# !apt-get install -y x11-utils python3-opengl xvfb
+# !pip install pyvirtualdisplay
+# import pyvirtualdisplay
+# display = pyvirtualdisplay.Display(visible=False, size=(1400, 900))
+# display.start()
 
 # # @title Install vmas
 # !pip install vmas
@@ -266,10 +265,10 @@ class MyScenario(BaseScenario):
         self.n_obstacles = kwargs.pop("n_obstacles", 0)
 
         self.world_spawning_x = kwargs.pop(
-            "world_spawning_x", 0.25*self.n_agents
+            "world_spawning_x", 0.15*self.n_agents
         )  # X-coordinate limit for entities spawning
         self.world_spawning_y = kwargs.pop(
-            "world_spawning_y", 0.25*self.n_agents
+            "world_spawning_y", 0.15*self.n_agents
         )  # Y-coordinate limit for entities spawning
 
         self.comms_rendering_range = kwargs.pop(
@@ -759,7 +758,7 @@ experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized 
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
-experiment_config.render = True  # Rendering enabled (use run_with_display.sh wrapper script)
+experiment_config.render = False
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.evaluation_interval = 120_000 # Interval in terms of frames, will evaluate every 120_000 / 60_000 = 2 iterations
 experiment_config.evaluation_episodes = 200 # Number of vmas vectorized enviornemnts used in evaluation
@@ -1032,6 +1031,8 @@ task.config = {
         "lidar_range": 0,
         "comms_rendering_range": comms_radius, # Changed
         "shared_rew": True,
+        # "world_spawning_x": 3.0,
+        # "world_spawning_y": 3.0,
 }
 
 """We are now ready to train!
@@ -1092,7 +1093,7 @@ class MyCallbackB(Callback):
 #     callbacks=[MyCallbackB()]
 # )
 
-train_or_eval = input('Select TRAIN or EVAL: ')
+train_or_eval = input('Select TRAIN, EVAL, or LOAD: ')
 if train_or_eval == 'TRAIN':
     experiment = Experiment(
         task=task,
@@ -1109,20 +1110,23 @@ elif train_or_eval == 'EVAL':
     from benchmarl.hydra_config import reload_experiment_from_file
     # current_folder = Path(__file__).parent.parent.absolute()
     # print(current_folder)
-    restore_file = input('Provide absolute path to folder to load: ')
+    # restore_file = input('Provide absolute path to folder to load: ')
     # restore_file = (
     #     current_folder
     #     / load_folder
     # )
-    print(str(restore_file))
+    # print(str(restore_file))
     # experiment = reload_experiment_from_file(str(restore_file))
-    experiment_config.restore_file = str(restore_file)
+    # experiment_config.restore_file = str(restore_file)
+    experiment_config.restore_file = "/home/uchiwuwu/BenchMARL/mappo_navigation_sequencemodel__1ca6056f_25_10_01-00_54_30/checkpoints/checkpoint_18000000.pt"
+    import random
+    eval_seed = random.randint(0, 2**31 - 1)    
     experiment = Experiment(
         task=task,
         algorithm_config=algorithm_config,
         model_config=model_config,
         critic_model_config=critic_model_config,
-        seed=0,
+        seed=eval_seed,
         config=experiment_config,
         callbacks=[MyCallbackB()]
     )
@@ -1171,102 +1175,505 @@ elif train_or_eval == 'EVAL':
             edge_mask_type='object',
             model_config=dict(
                 mode='regression',
-                task_level='node'
+                task_level='graph'
             ),
         )
     else:
         raise Exception('Not a valid input')
 
-    experiment.config.evaluation_episodes = 1
-    experiment._setup_task()
+    num_cases = int(input('\nHow many cases to generate? [default=1]: ').strip() or '1')
 
-    experiment.test_env.explainer_features = explainer_features
-    experiment.test_env.gnn_exp = True
-    
-    # Setup LLM to interpret explainer features
-    use_llm = input('\nDo you want to use LLM to interpret explainer features? (yes/no): ').strip().lower()
-    
-    if use_llm == 'yes':
-        llm_choice = input('Choose LLM: (1) OpenAI API, (2) Local Ollama, (3) Skip: ')
-        
-        if llm_choice == '1':
-            # OpenAI API
-            import os
-            api_key = os.environ.get('OPENAI_API_KEY')
-            if not api_key:
-                api_key = input('Enter your OpenAI API key: ').strip()
-                os.environ['OPENAI_API_KEY'] = api_key
-            
-            try:
-                import openai
-                openai.api_key = api_key
-                experiment.test_env.llm_client = openai
-                experiment.test_env.llm_model = "gpt-4o-mini"
-                experiment.test_env.use_llm = True
-                print(f"✓ OpenAI LLM configured (model: gpt-4o-mini)")
-            except ImportError:
-                print("! Install openai: pip install openai")
-                experiment.test_env.use_llm = False
-                
-        elif llm_choice == '2':
-            # Local Ollama
-            try:
-                import requests
-                # Test Ollama connection
-                response = requests.get('http://localhost:11434/api/tags')
-                if response.status_code == 200:
-                    # List available models
-                    models = response.json().get('models', [])
-                    if models:
-                        print(f"Available models: {[m['name'] for m in models]}")
-                        model_choice = input(f"Enter model name (or press Enter for 'llama2'): ").strip() or 'llama2'
-                    else:
-                        model_choice = 'llama2'
-                    
-                    experiment.test_env.llm_client = 'ollama'
-                    experiment.test_env.llm_model = model_choice
-                    experiment.test_env.use_llm = True
-                    print(f"✓ Ollama LLM configured (model: {model_choice})")
-                else:
-                    print("! Ollama not running. Start with: ollama serve")
-                    experiment.test_env.use_llm = False
-            except:
-                print("! Ollama not available. Install: https://ollama.ai")
-                experiment.test_env.use_llm = False
-        else:
-            experiment.test_env.use_llm = False
-    else:
+    from datetime import datetime
+    import pandas as pd
+    import numpy as np
+
+    for case_idx in range(num_cases):
+        print(f"\n{'='*60}")
+        print(f"GENERATING CASE {case_idx + 1} of {num_cases}")
+        print(f"{'='*60}")
+
+        eval_seed = random.randint(0, 2**31 - 1)
+        experiment = Experiment(
+            task=task,
+            algorithm_config=algorithm_config,
+            model_config=model_config,
+            critic_model_config=critic_model_config,
+            seed=eval_seed,
+            config=experiment_config,
+            callbacks=[MyCallbackB()]
+        )
+
+        experiment.config.evaluation_episodes = 1
+        experiment._setup_task()
+
+        experiment.test_env.explainer_features = explainer_features
+        experiment.test_env.gnn_exp = True
         experiment.test_env.use_llm = False
+
+        print(f"\nRunning evaluation for case {case_idx + 1}/{num_cases}...")
+        print("(Use LOAD mode after evaluation to analyze data with LLM)\n")
+
+        experiment.evaluate()
+
+        # Save the accumulated data after evaluation
+        print("\n" + "="*60)
+        print(f"SAVING EXPLAINER DATA - CASE {case_idx + 1}/{num_cases}")
+        print("="*60)
+
+        # Create timestamp for filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        csv_filename = f"explainer_data_{timestamp}_case{case_idx + 1}of{num_cases}.csv"
+
+        # Start with timestep column
+        max_timesteps = experiment.mask_count
+        combined_df = pd.DataFrame({'timestep': range(max_timesteps)})
+
+        # Add edge masks
+        if experiment.accumulated_edge_mask is not None:
+            edge_mask_tensor = torch.stack(experiment.accumulated_edge_mask)
+            edge_mask_data = edge_mask_tensor.squeeze(-1).cpu().numpy()
+            print(f"✓ Edge mask shape: {edge_mask_tensor.shape}")
+
+            # Reshape to 2D: (timesteps, edges)
+            edge_mask_2d = edge_mask_data.reshape(edge_mask_data.shape[0], -1)
+            for i in range(edge_mask_2d.shape[1]):
+                combined_df[f'edge_mask_{i}'] = edge_mask_2d[:, i]
+
+        # Add observations
+        if experiment.accumulated_states:
+            try:
+                obs_tensor = torch.stack(experiment.accumulated_states)
+                print(f"✓ Observations shape: {obs_tensor.shape}")
+
+                # Handle both regular tensors and TensorDict
+                if hasattr(obs_tensor, 'cpu'):
+                    obs_data = obs_tensor.cpu().numpy()
+                else:
+                    obs_data = obs_tensor
+
+                # Check if it's a dict (from TensorDict)
+                if isinstance(obs_data, dict):
+                    print("✓ Observations are stored as dict, flattening...")
+                    flat_obs = []
+                    for timestep_dict in experiment.accumulated_states:
+                        timestep_values = []
+                        for key in sorted(timestep_dict.keys()):
+                            val = timestep_dict[key]
+                            if hasattr(val, 'cpu'):
+                                val = val.cpu().numpy()
+                            timestep_values.append(val.flatten())
+                        flat_obs.append(np.concatenate(timestep_values))
+                    obs_2d = np.array(flat_obs)
+                else:
+                    obs_2d = obs_data.reshape(obs_data.shape[0], -1)
+
+                for i in range(obs_2d.shape[1]):
+                    combined_df[f'obs_{i}'] = obs_2d[:, i]
+            except Exception as e:
+                print(f"! Warning: Could not process observations: {e}")
+
+        # Add actions
+        if experiment.accumulated_actions:
+            try:
+                action_tensor = torch.stack(experiment.accumulated_actions)
+                print(f"✓ Actions shape: {action_tensor.shape}")
+
+                # Handle both regular tensors and TensorDict
+                if hasattr(action_tensor, 'cpu'):
+                    action_data = action_tensor.cpu().numpy()
+                else:
+                    action_data = action_tensor
+
+                # Check if it's a dict (from TensorDict)
+                if isinstance(action_data, dict):
+                    print("✓ Actions are stored as dict, flattening...")
+                    flat_actions = []
+                    for timestep_dict in experiment.accumulated_actions:
+                        timestep_values = []
+                        for key in sorted(timestep_dict.keys()):
+                            val = timestep_dict[key]
+                            if hasattr(val, 'cpu'):
+                                val = val.cpu().numpy()
+                            timestep_values.append(val.flatten())
+                        flat_actions.append(np.concatenate(timestep_values))
+                    action_2d = np.array(flat_actions)
+                else:
+                    action_2d = action_data.reshape(action_data.shape[0], -1)
+
+                for i in range(action_2d.shape[1]):
+                    combined_df[f'action_{i}'] = action_2d[:, i]
+            except Exception as e:
+                print(f"! Warning: Could not process actions: {e}")
+
+        # Save to single CSV file
+        combined_df.to_csv(csv_filename, index=False)
+        print(f"\n✓ All data saved to: {csv_filename}")
+        print(f"✓ Total columns: {len(combined_df.columns)}")
+        print(f"✓ Total rows: {len(combined_df)}")
+        print("="*60 + "\n")
+
+elif train_or_eval == 'LOAD':
+    print("\n" + "="*60)
+    print("LOAD MODE - Load and analyze explainer data with LLM")
+    print("="*60 + "\n")
+
+    import pandas as pd
+    import numpy as np
+    import os
+    import glob
+
+    # Ask user for filename
+    data_files = glob.glob("explainer_data_*.csv")
+    if data_files:
+        print("\nAvailable data files:")
+        for i, f in enumerate(data_files):
+            print(f"  {i+1}. {f}")
+        choice = input(f"Enter number (1-{len(data_files)}) or full filename: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(data_files):
+            csv_filename = data_files[int(choice)-1]
+        else:
+            csv_filename = choice if choice.endswith('.csv') else f"{choice}.csv"
+    else:
+        csv_filename = input("Enter filename (e.g., explainer_data_20251028_173510.csv): ").strip()
+
+    print(f"\nLoading data from: {csv_filename}")
+
+    # Load the single CSV file
+    if not os.path.exists(csv_filename):
+        print(f"! Error: {csv_filename} not found")
+        raise FileNotFoundError(f"{csv_filename} not found")
+
+    df = pd.read_csv(csv_filename)
+    print(f"✓ Loaded CSV with {len(df)} rows and {len(df.columns)} columns")
+
+    # Extract metadata from metadata columns
+    metadata_cols = [col for col in df.columns if col.startswith('metadata_')]
+    metadata = {}
+    for col in metadata_cols:
+        key = col.replace('metadata_', '')
+        metadata[key] = df[col].iloc[0]
+
+    print(f"✓ Metadata: timestamp={metadata.get('timestamp', 'unknown')}")
+    print(f"✓ Timesteps: {metadata.get('mask_count', len(df))}, Agents: {metadata.get('num_agents', 4)}")
+
+    # Extract node masks
+    node_mask_cols = [col for col in df.columns if col.startswith('node_mask_')]
+    if node_mask_cols:
+        node_mask_list = df[node_mask_cols].values.tolist()
+        print(f"✓ Loaded node masks: {len(node_mask_list)} timesteps, {len(node_mask_cols)} columns")
+    else:
+        node_mask_list = []
+        print("! Warning: No node mask columns found")
+
+    # Extract edge masks
+    edge_mask_cols = [col for col in df.columns if col.startswith('edge_mask_')]
+    if edge_mask_cols:
+        edge_mask_list = df[edge_mask_cols].values.tolist()
+        print(f"✓ Loaded edge masks: {len(edge_mask_list)} timesteps, {len(edge_mask_cols)} columns")
+    else:
+        edge_mask_list = []
+        print("! Warning: No edge mask columns found")
+
+    # Extract observations
+    obs_cols = [col for col in df.columns if col.startswith('obs_')]
+    if obs_cols:
+        obs_list = df[obs_cols].values.tolist()
+        print(f"✓ Loaded observations: {len(obs_list)} timesteps, {len(obs_cols)} features")
+    else:
+        obs_list = []
+        print("! Warning: No observation columns found")
+
+    # Extract actions
+    action_cols = [col for col in df.columns if col.startswith('action_')]
+    if action_cols:
+        action_list = df[action_cols].values.tolist()
+        print(f"✓ Loaded actions: {len(action_list)} timesteps, {len(action_cols)} action dims")
+    else:
+        action_list = []
+        print("! Warning: No action columns found")
+
+    # Print first timestep info
+    if obs_list:
+        print("\n" + "="*60)
+        print("FIRST TIMESTEP OF OBSERVATIONS")
+        print("="*60)
+        print(f"First observation row: {obs_list[0][:10]}...")  # Show first 10 values
+        print("="*60 + "\n")
+
+    # Setup LLM - only Ollama for now
+    print("\n" + "="*60)
+    print("LLM SETUP")
+    print("="*60)
+
+    llm_choice = input('Choose LLM: (1) OpenAI API, (2) Local Ollama, (3) Google Gemini, (4) Qwen (Ollama), (5) Gemma (Ollama): ')
+
+    if llm_choice == '1':
+        # OpenAI API
+        import os
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            api_key = input('Enter your OpenAI API key: ').strip()
+            os.environ['OPENAI_API_KEY'] = api_key
+
+        try:
+            import openai
+            openai.api_key = api_key
+            llm_client = openai
+            llm_model = "gpt-4o-mini"
+            use_llm = True
+            llm_type = 'openai'
+            print(f"✓ OpenAI LLM configured (model: gpt-4o-mini)")
+        except ImportError:
+            print("! Install openai: pip install openai")
+            raise Exception('OpenAI not available')
+
+    elif llm_choice == '2':
+        # Local Ollama
+        try:
+            import requests
+            # Test Ollama connection
+            response = requests.get('http://localhost:11434/api/tags')
+            if response.status_code == 200:
+                # List available models
+                models = response.json().get('models', [])
+                if models:
+                    print(f"\nAvailable models: {[m['name'] for m in models]}")
+                    model_choice = input(f"Enter model name (or press Enter for 'llama3'): ").strip() or 'llama3'
+                else:
+                    model_choice = 'llama3'
+
+                llm_client = 'ollama'
+                llm_model = model_choice
+                use_llm = True
+                llm_type = 'ollama'
+                print(f"✓ Ollama LLM configured (model: {model_choice})")
+            else:
+                print("! Ollama not running. Start with: ollama serve")
+                raise Exception('Ollama not available')
+        except Exception as e:
+            print(f"! Ollama not available: {e}")
+            raise Exception('Ollama not available')
+
+    elif llm_choice == '3':
+        # Google Gemini
+        import os
+        api_key = os.environ.get('GOOGLE_API_KEY')
+        if not api_key:
+            os.environ['GOOGLE_API_KEY'] = "AIzaSyC_fYBVjuVjJQQd9cULtP8ltFsPpsvHoLM"
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+
+            # List available models to verify
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            print(f"Available Gemini models: {available_models[:3]}")  # Show first 3
+
+            llm_client = genai
+            # Use the latest available flash model
+            llm_model = "models/gemini-2.5-flash" if "models/gemini-2.5-flash" in available_models else available_models[0]
+            use_llm = True
+            llm_type = 'gemini'
+            print(f"✓ Google Gemini LLM configured (model: {llm_model})")
+        except ImportError:
+            print("! Install google-generativeai: pip install google-generativeai")
+            raise Exception('Google Gemini not available')
+
+    elif llm_choice == '4':
+        # Qwen via Ollama
+        try:
+            import requests
+            # Test Ollama connection
+            response = requests.get('http://localhost:11434/api/tags')
+            if response.status_code == 200:
+                # List available models and check for Qwen
+                models = response.json().get('models', [])
+                qwen_models = [m['name'] for m in models if 'qwen' in m['name'].lower()]
+
+                if qwen_models:
+                    print(f"\nAvailable Qwen models: {qwen_models}")
+                    model_choice = input(f"Enter Qwen model name (or press Enter for '{qwen_models[0]}'): ").strip() or qwen_models[0]
+                else:
+                    print("\nNo Qwen models found. Available models:", [m['name'] for m in models])
+                    print("\nTo install Qwen, run: ollama pull qwen2.5:7b")
+                    model_choice = input("Enter model name to use: ").strip()
+                    if not model_choice:
+                        raise Exception('No model specified')
+
+                llm_client = 'ollama'
+                llm_model = model_choice
+                use_llm = True
+                llm_type = 'ollama'  # Qwen uses same API as Ollama
+                print(f"✓ Qwen LLM configured (model: {model_choice})")
+            else:
+                print("! Ollama not running. Start with: ollama serve")
+                raise Exception('Ollama not available')
+        except Exception as e:
+            print(f"! Qwen/Ollama not available: {e}")
+            raise Exception('Qwen not available')
+
+    elif llm_choice == '5':
+        # Gemma via Ollama
+        try:
+            import requests
+            # Test Ollama connection
+            response = requests.get('http://localhost:11434/api/tags')
+            if response.status_code == 200:
+                # List available models and check for Gemma
+                models = response.json().get('models', [])
+                gemma_models = [m['name'] for m in models if 'gemma' in m['name'].lower()]
+
+                if gemma_models:
+                    print(f"\nAvailable Gemma models: {gemma_models}")
+                    model_choice = input(f"Enter Gemma model name (or press Enter for '{gemma_models[0]}'): ").strip() or gemma_models[0]
+                else:
+                    print("\nNo Gemma models found. Available models:", [m['name'] for m in models])
+                    print("\nTo install Gemma, run: ollama pull gemma2:9b")
+                    model_choice = input("Enter model name to use: ").strip()
+                    if not model_choice:
+                        raise Exception('No model specified')
+
+                llm_client = 'ollama'
+                llm_model = model_choice
+                use_llm = True
+                llm_type = 'ollama'  # Gemma uses same API as Ollama
+                print(f"✓ Gemma LLM configured (model: {model_choice})")
+            else:
+                print("! Ollama not running. Start with: ollama serve")
+                raise Exception('Ollama not available')
+        except Exception as e:
+            print(f"! Gemma/Ollama not available: {e}")
+            raise Exception('Gemma not available')
+
+    else:
+        raise Exception('Invalid LLM choice')
+
+    # node edge state action
+    state_action_mask_prompt = f"""Temporal information of agents over 250 timesteps in numerical form provided:
+    'node_mask_list':
+    {node_mask_list}
+    'edge_mask_list':
+    {edge_mask_list}
+    'obs_list':
+    {obs_list}
+    'action_list':
+    {action_list}"""
+
+
+    question_prompt = """Environment description:
+    The task considers a team of 4 agents, there are no LIDAR sensors equipped on the agents. 
+    This means that the agents only observe their own position, velocity, and goal location, 
+    and that each agent has no information about the other agents from local observations alone. 
+    Both initial and goal locations are randomized. Thus, effective communication is required to 
+    solve our blind version of this task.
+    What shold the LLM generate:
+    Your task is to explain why a neural network chooses agent 0 to take an action based on the given information. 
+    In addition, explain agent 0's actions in relation to other agents. The model’s behavior can be understood from 
+    the following collection of observation and action pairs, given in the format of  arrays (observation, position, action).
     
-    if not experiment.test_env.use_llm:
-        print("\nLLM disabled. Explainer will show node_mask and edge_mask values.\n")
+    The 'obs_list': row is each agent, since we have 4 agents, we have 4 rows. The first two columns are the x,y position of the agent itself. 
+    The third and fourth column are the velocity (vectorized). The last two columns are the x,y location of the agent’s goal. 
+    There are 250 timesteps, hence the shape ([250, 1, 4, 6]), corresponding to 250 timesteps, 4 agents, and 6 observation values.
+    
+    The 'action_list': row is each agent, since we have 4 agents, we have 4 rows. 
+    The columns represent horizontal (x) and vertical (y) motion of the agent.
+    There are 250 timesteps, hence the shape ([250, 1, 4, 2]), corresponding to 250 timesteps, 4 agents, and 2 action values.
 
-    experiment.evaluate()
+    The 'node_mask_list': each row is each timestep. Each column is each agent's importance. The higher the number, the more important the agent is in terms 
+    of the team decision making at that timestep.
+    There are 250 timesteps, hence the shape ([250, 4]), corresponding to 250 timesteps, 4 agents' importance value
+    
+    The 'edge_mask_list': each row is each timestep. Each column is the importance of the connection between 2 agents.
+    [0,0; 0,1; 0,2; 0,3; 1, 0; 1, 1;...; 3, 3]. The first element is the connection between agent 0 and itself. 
+    The second element is the connection between agent 0 and agent 1. The same logic goes on.
+    It is a flattern adjacency matrix.
+    The higher the number, the more important the connection between the two agents is in terms 
+    of the team decision making at that timestep.
+    There are 250 timesteps, hence the shape ([250, 12]), corresponding to 250 timesteps, 12 connections' importance value
+    """
+    print(f"obs_list[0][0][0]['pos']: {obs_list[0][0][0]['pos']}")
+    answer_prompt ="""
+    Please answer following this template:
+    Agent {0} started at position {obs_list[0][0][0][0][:2]}
+
+    The agent is taking a {path: direct, long-winded, opposite} path towards its goal at location {obs_list[0][0][0][0][-2:]} , which is {euclidean distance: obs_list[0][0][0][0][:2] - obs_list[0][0][0][0][-2:]} away. 
+
+    The reason for this navigation choice is because {reason: no obstacle to avoid; other agents are in its way; it is dumb}.
+
+    Using what we seeing in edge_mask_list, agent x and agent z are in the way of agent 0 at timestep y, therefore ... (generate the rest)
+    {repeat the above for the agents 1,2,3}
+    """
+
+    question_prompt = """
+    what is the value of the numpy array obs_list[0][0][0]['pos'] from obs_list I provided for the answer?
+    """
+
+    # print(f"Questions:\n{question_prompt}\n")
+
+
+    # Get LLM responses for both prompts
+    prompts = {
+        # "Node and Edge mask": node_edge_prompt + "\n\n" + question_prompt,
+        # "WITH State/Action": state_action_mask_prompt + "\n\n" + question_prompt + "\n\n" + answer_prompt,
+        # "WITHOUT Masks": state_action_no_mask_prompt + "\n\n" + question_prompt,
+        "Test Question": state_action_mask_prompt + "\n\n" + question_prompt,
+    }
+
+    for prompt_name, prompt in prompts.items():
+        print(f"\nLLM RESPONSE ({prompt_name}):")
+        print("="*60)
+
+        try:
+            # Call LLM based on type
+            if llm_type == 'openai':
+                response = llm_client.chat.completions.create(
+                    model=llm_model,
+                    messages=[
+                        {"role": "system", "content": "You are an expert in multi-agent systems and graph neural networks."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=500,
+                    temperature=0.7
+                )
+                llm_response = response.choices[0].message.content
+            elif llm_type == 'ollama':
+                import requests
+                response = requests.post(
+                    'http://localhost:11434/api/generate',
+                    json={
+                        'model': llm_model,
+                        'prompt': "You are an expert in multi-agent systems and graph neural networks.\n\n" + prompt,
+                        'stream': False
+                    },
+                    timeout=120
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    llm_response = result.get('response', result.get('message', f'Unexpected format: {result}'))
+                else:
+                    llm_response = f"Ollama error {response.status_code}: {response.text}"
+            elif llm_type == 'gemini':
+                model = llm_client.GenerativeModel(
+                    llm_model,
+                    system_instruction="You are an expert in multi-agent systems and graph neural networks."
+                )
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        max_output_tokens=5000,
+                        temperature=0.7,
+                    )
+                )
+                llm_response = response.text
+            else:
+                llm_response = "Unknown LLM type"
+
+            print(f"{llm_response}\n")
+            print("="*60 + "\n")
+
+        except Exception as e:
+            print(f"Warning: LLM interpretation failed: {e}\n")
+
 else:
-    raise Exception('Not valid input')
+    raise Exception('Not valid input (use TRAIN, EVAL, or LOAD)')
 
-
-"""Here are the agents after full training:
-
-![](https://raw.githubusercontent.com/matteobettini/vmas-media/refs/heads/main/media/tutorial_gifs/TrainwithoutLIDARwithGNN.gif)
-
-As you can see the agents were able to use the GNN communication to avoid collisions
-
-## Extensions
-
-Here are a few things you can try in your own time.
-
-**Beginner**:
-- Change the algorithm and compare algorithms (algorithms that support only discrete actions will use those)
-- Change the model. For example you can add a memory layer
-- Train the agents with a shared reward by changing the task configuration
-
-**Intermediate**:
-- Try to disable parameter sharing think about its implications
-- MAPPO uses a centralised critic which takes as input the concatenation of all agents observations. This is not scalable in the number of agents. Try using a [DeepSets](https://benchmarl.readthedocs.io/en/latest/generated/benchmarl.models.Deepsets.html#benchmarl.models.Deepsets) model instead for the critic
-- Use different models or algorthms for each group using the [ensemble components](https://benchmarl.readthedocs.io/en/latest/concepts/features.html#ensemble-models-and-algorithms).
-
-**Advanced**:
-- Set up a reward curriculum using [callbacks](https://github.com/facebookresearch/BenchMARL/tree/main/examples/callback). Start from a dense reward and slowly anneal it leaving only the sparse one
-- Implement [GPPO](https://arxiv.org/abs/2301.07137) by using a GNN for both the actor and critic and sharing the GNN layer parameters between actor and critic. Hint: you can use a callback and [this function](https://github.com/facebookresearch/BenchMARL/blob/7ae02107df151a4a2eb002d61ce3426c9c002cec/benchmarl/models/common.py#L165). You will also have to change the algorithm to IPPO
-"""

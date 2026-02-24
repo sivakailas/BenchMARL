@@ -668,149 +668,20 @@ class Experiment(CallbackNotifier):
     def evaluate(self):
         """Run just the evaluation loop once."""
         seed_everything(self.seed)
+        print("\n" + "="*60)
+        print("ENVIRONMENT SPACES:")
+        print("="*60)
+        print("="*60 + "\n")
+
         self._evaluation_loop()
-        
-        # Process accumulated masks with LLM if available
+
         if self.mask_count > 0:
             print("\n" + "="*60)
-            print(f"ACCUMULATED MASKS (total over {self.mask_count} timesteps):")
+            print(f"EXPLAINER DATA COLLECTED: {self.mask_count} timesteps")
             print("="*60)
+            print("Data will be saved after evaluation completes.")
+            print("Use LOAD mode to analyze with LLM.")
             print("="*60 + "\n")
-            
-            # Check if LLM is available from test environment
-            if hasattr(self.test_env, "use_llm") and self.test_env.use_llm and hasattr(self.test_env, "llm_client"):
-                try:
-                    print("\n" + "="*60)
-                    print("LLM INTERPRETATION OF ACCUMULATED EXPLAINER FEATURES:")
-                    print("="*60)
-                    
-                    # Convert full accumulated masks to list format for LLM
-                    node_mask_list = self.accumulated_node_mask.squeeze().tolist() if self.accumulated_node_mask is not None else []
-                    edge_mask_list = self.accumulated_edge_mask.squeeze().tolist() if self.accumulated_edge_mask is not None else []
-                    states = self.accumulated_states
-                    actions = self.accumulated_actions
-                    # Create sorted versions (descending order by importance)
-                    if node_mask_list:
-                        sorted_node_mask_list = sorted(enumerate(node_mask_list), key=lambda x: x[1], reverse=True)
-                    else:
-                        sorted_node_mask_list = []
-
-                    if edge_mask_list:
-                        sorted_edge_mask_list = sorted(enumerate(edge_mask_list), key=lambda x: x[1], reverse=True)
-                    else:
-                        sorted_edge_mask_list = []
-
-                    # Get number of agents from node mask shape
-                    num_agents = self.accumulated_node_mask.shape[0] if self.accumulated_node_mask is not None and len(self.accumulated_node_mask.shape) > 0 else "unknown"
-
-                    # Prepare states and actions for prompts
-                    states = [s.tolist() if hasattr(s, 'tolist') else s for s in self.accumulated_states] if self.accumulated_states else "No states available"
-                    actions = [a.tolist() if hasattr(a, 'tolist') else a for a in self.accumulated_actions] if self.accumulated_actions else "No actions available"
-
-                    # Create no_state_action_prompt for LLM with full accumulated masks
-                    no_state_action_prompt = f"""Analyze this GNN explanation for a multi-agent navigation task with {num_agents} agents, accumulated over {self.mask_count} timesteps.
-                    ACCUMULATED EXPLAINER FEATURES (raw accumulated values):
-                    Node Mask (accumulated importance for each agent):
-                    {node_mask_list}
-
-                    Edge Mask (accumulated importance for each edge/interaction):
-                    {edge_mask_list}
-
-                    Based on these accumulated features over the entire episode:
-                    1. Which agents were most critical for decision-making throughout the episode?
-                    2. What does this suggest about the team's coordination strategy?
-                    3. Are there any patterns or insights about how the agents worked together?
-
-                    Provide a concise analysis in 3-4 sentences."""
-
-                    state_action_no_description_prompt = f"""Analyze this GNN explanation for a multi-agent navigation task with {num_agents} agents, accumulated over {self.mask_count} timesteps.
-                    ACCUMULATED EXPLAINER FEATURES (raw accumulated values):
-                    Node Mask (accumulated importance for each agent):
-                    {node_mask_list}
-
-                    Edge Mask (accumulated importance for each edge/interaction):
-                    {edge_mask_list}
-                    Accumulated state space:
-                    {states}
-                    Accumulated action space:
-                    {actions}
-                    Based on these accumulated features over the entire episode:
-                    1. Which agents were most critical for decision-making throughout the episode?
-                    2. What does this suggest about the team's coordination strategy?
-                    3. Are there any patterns or insights about how the agents worked together?
-
-                    Provide a concise analysis in 3-4 sentences."""
-
-                    
-
-                    question_prompt = """
-                    Based on these accumulated features over the entire episode:
-                    1. Which agents were most critical for decision-making throughout the episode?
-                    2. What does this suggest about the team's coordination strategy?
-                    3. Are there any patterns or insights about how the agents worked together?
-
-                    Provide a concise analysis in 3-4 sentences.
-                    """
-                    print(f"Questions:\n{question_prompt}\n")
-                    mask_list_prompt = f"""
-                    Sorted node mask list:
-                    {sorted_node_mask_list}
-                    Sorted edge mask list:
-                    {sorted_edge_mask_list}
-                    """
-                    print(mask_list_prompt)
-
-                    # Get LLM responses for both prompts
-                    prompts = {
-                        "WITHOUT State/Action": no_state_action_prompt,
-                        "WITH State/Action": state_action_no_description_prompt
-                    }
-
-                    for prompt_name, prompt in prompts.items():
-                        print("\n" + "="*60)
-                        print(f"LLM RESPONSE ({prompt_name}):")
-                        print("="*60)
-
-                        # Call LLM based on type
-                        if hasattr(self.test_env.llm_client, 'chat'):
-                            # OpenAI API
-                            response = self.test_env.llm_client.chat.completions.create(
-                                model=self.test_env.llm_model,
-                                messages=[
-                                    {"role": "system", "content": "You are an expert in multi-agent systems and graph neural networks. Provide concise, insightful analysis."},
-                                    {"role": "user", "content": prompt}
-                                ],
-                                max_tokens=200,
-                                temperature=0.7
-                            )
-                            llm_response = response.choices[0].message.content
-                        elif self.test_env.llm_client == 'ollama':
-                            # Ollama local
-                            import requests
-                            try:
-                                response = requests.post('http://localhost:11434/api/generate',
-                                    json={
-                                        'model': self.test_env.llm_model,
-                                        'prompt': prompt,
-                                        'stream': False
-                                    },
-                                    timeout=30)
-
-                                if response.status_code == 200:
-                                    result = response.json()
-                                    llm_response = result.get('response', result.get('message', f'Unexpected format: {result}'))
-                                else:
-                                    llm_response = f"Ollama error {response.status_code}: {response.text}"
-                            except requests.exceptions.RequestException as e:
-                                llm_response = f"Ollama connection error: {e}"
-                        else:
-                            llm_response = "Unknown LLM client"
-
-                        print(f"{llm_response}\n")
-                        print("="*60 + "\n")
-                    
-                except Exception as e:
-                    print(f"Warning: LLM interpretation failed: {e}\n")
         
         self.logger.commit()
         print(
@@ -1056,23 +927,41 @@ class Experiment(CallbackNotifier):
                     video_frames.append(
                         self.task.__class__.render_callback(self, env, td)
                     )
+                
+                # ALWAYS accumulate states and actions (with correct keys)
+                if "holonomic" in td.keys():
+                    if "observation" in td["holonomic"].keys():
+                        state = td["holonomic"]["observation"].clone().detach()
+                        self.accumulated_states.append(state['obs'])
+                
+                if "holonomic" in td.keys():
+                    if "action" in td["holonomic"].keys():
+                        action = td["holonomic"]["action"].clone().detach()
+                        self.accumulated_actions.append(action)
+
                 if hasattr(env, "gnn_exp") == True and env.gnn_exp == True:
                     torch.set_grad_enabled(True)
                     data = Data(x=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.x, edge_index=self.policy.module[0].module[0].module[0].models.module[0].cache_graph.edge_index)
                     explanation_features = env.explainer_features(data.x, data.edge_index)
                     node_mask = explanation_features.get('node_mask')
                     edge_mask = explanation_features.get('edge_mask')
-                    self.accumulated_node_mask = node_mask.clone() if self.accumulated_node_mask is None else self.accumulated_node_mask + node_mask
-                    self.accumulated_edge_mask = edge_mask.clone() if self.accumulated_edge_mask is None else self.accumulated_edge_mask + edge_mask
+                    #EDITED: append this instead of concat
+                    if node_mask is not None:
+                        if self.accumulated_node_mask is None:
+                            self.accumulated_node_mask = [node_mask.clone()]
+                        else:
+                            self.accumulated_node_mask.append(node_mask.clone())
+                    if edge_mask is not None:
+                        if self.accumulated_edge_mask is None:
+                            self.accumulated_edge_mask = [edge_mask.clone()]
+                        else:
+                            self.accumulated_edge_mask.append(edge_mask.clone())
                     self.mask_count += 1
 
                     # Accumulate states and actions from tensordict
-                    if "observation" in td.keys():
-                        state = td["observation"].clone().detach()
-                        self.accumulated_states.append(state)
-                    if "action" in td.keys():
-                        action = td["action"].clone().detach()
-                        self.accumulated_actions.append(action)
+
+                    # print(sata)
+
 
             if self.test_env.batch_size == ():
                 rollouts = []
@@ -1092,7 +981,7 @@ class Experiment(CallbackNotifier):
                     policy=self.policy,
                     callback=callback,
                     auto_cast_to_device=True,
-                    break_when_any_done=False,
+                    break_when_any_done=True,
                     # We are running vectorized evaluation we do not want it to stop when just one env is done
                 )
                 rollouts = list(rollouts.unbind(0))
