@@ -51,6 +51,7 @@ if _has_hydra:
     from hydra.core.hydra_config import HydraConfig
 
 from torch_geometric.data import Data
+from torch_geometric.explain import metric
 
 @dataclass
 class ExperimentConfig:
@@ -913,12 +914,20 @@ class Experiment(CallbackNotifier):
                     explanation_features = env.explainer_features(data.x, data.edge_index)
                     node_mask = explanation_features.get('node_mask')
                     edge_mask = explanation_features.get('edge_mask')
-                    print(node_mask)
-                    print(edge_mask)
-                    print('obs (pos, vel, goal pose): ', td['holonomic']['observation']['obs'].tolist())
-                    print('pos: ', td['holonomic']['observation']['pos'].tolist())
-                    print('vel: ', td['holonomic']['observation']['vel'].tolist())
-                    print('action: ', td['holonomic']['action'].tolist())
+                    if hasattr(env, 'gnn_exp_info') == True and env.gnn_exp_info == True:
+                        print(node_mask)
+                        print(edge_mask)
+                        print('obs (pos, vel, goal pose): ', td['holonomic']['observation']['obs'].tolist())
+                        print('pos: ', td['holonomic']['observation']['pos'].tolist())
+                        print('vel: ', td['holonomic']['observation']['vel'].tolist())
+                        print('action: ', td['holonomic']['action'].tolist())
+                    # print(node_mask)
+                    # print(edge_mask)
+                    fp, fm = metric.fidelity(explainer=env.explainer_features, explanation=explanation_features)
+                    env.fid_plus.append(fp)
+                    env.fid_minus.append(fm)
+                    env.char_scores.append(metric.characterization_score(fp, fm))
+                    env.delta_fid.append(fp-fm)
 
             if self.test_env.batch_size == ():
                 rollouts = []
@@ -984,7 +993,11 @@ class Experiment(CallbackNotifier):
 
         """
         for group in self.group_map.keys():
-            self.losses[group].load_state_dict(state_dict[f"loss_{group}"])
+            try:
+                self.losses[group].load_state_dict(state_dict[f"loss_{group}"])
+            except Exception:
+                print('Agent Mismatch! Ignore if Intentional')
+                pass
             if state_dict[f"buffer_{group}"] is not None:
                 self.replay_buffers[group].load_state_dict(
                     state_dict[f"buffer_{group}"]

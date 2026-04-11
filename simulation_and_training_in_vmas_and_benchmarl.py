@@ -758,7 +758,7 @@ experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized 
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
-experiment_config.render = False
+experiment_config.render = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.evaluation_interval = 120_000 # Interval in terms of frames, will evaluate every 120_000 / 60_000 = 2 iterations
 experiment_config.evaluation_episodes = 200 # Number of vmas vectorized enviornemnts used in evaluation
@@ -1004,11 +1004,13 @@ For more details on how the GNN works see [here](https://benchmarl.readthedocs.i
 from benchmarl.models import GnnConfig, SequenceModelConfig
 import torch_geometric
 
+self_loops = input('Self Loops? (yes/no): ').lower() in ('yes','y')
+
 gnn_config = GnnConfig(
     topology="full", # Tell the GNN to build topology from positions and edge_radius
-    self_loops=False,
+    self_loops=self_loops,
     gnn_class=torch_geometric.nn.conv.GATv2Conv,
-    gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpful in RL
+    gnn_kwargs={"add_self_loops": self_loops, "residual": True}, # kwargs of GATv2Conv, residual is helpful in RL
     exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? Here we remove it as we want to be invariant to system translations (we do not use absolute positions)
 )
 # We add an MLP layer to process GNN output node embeddings into actions
@@ -1017,21 +1019,26 @@ mlp_config = MlpConfig.get_from_yaml()
 # Chain them in a sequence
 model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[32])
 
+model_config_mlp = MlpConfig.get_from_yaml()
 """And let's tell the VMAS task what comms_radius we are using so it can plot some nice communication lines when agents are in proximity.
 
 This is just nice to have for visualization.
 
 """
 
+num_agents = input('Number of agents: ')
+
 task.config = {
         "max_steps": 250,
-        "n_agents_holonomic": 4,
+        "n_agents_holonomic": int(num_agents), #4+1,
         "n_agents_diff_drive": 0,
         "n_agents_car": 0,
         "lidar_range": 0,
         "comms_rendering_range": comms_radius, # Changed
         "shared_rew": True,
 }
+
+print(gnn_config.gnn_kwargs)
 
 """We are now ready to train!
 
@@ -1093,6 +1100,11 @@ class MyCallbackB(Callback):
 
 train_or_eval = input('Select TRAIN or EVAL: ')
 if train_or_eval == 'TRAIN':
+    mlp_or_gnn = input('Select MLP or GNN: ')
+    if mlp_or_gnn == 'MLP':
+        print('Training with MLP!!!')
+        model_config = model_config_mlp
+        print(model_config)
     experiment = Experiment(
         task=task,
         algorithm_config=algorithm_config,
@@ -1104,6 +1116,11 @@ if train_or_eval == 'TRAIN':
     )
     experiment.run()
 elif train_or_eval == 'EVAL':
+    mlp_or_gnn = input('Select MLP or GNN: ')
+    if mlp_or_gnn == 'MLP':
+        print('EVAL with MLP!!!')
+        model_config = model_config_mlp
+        print(model_config)
     from pathlib import Path
     from benchmarl.hydra_config import reload_experiment_from_file
     # current_folder = Path(__file__).parent.parent.absolute()
@@ -1126,62 +1143,134 @@ elif train_or_eval == 'EVAL':
         callbacks=[MyCallbackB()]
     )
 
-    for param in experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0].parameters():
-        param.requires_grad = False
-    
-    policy_to_explain = copy.deepcopy(experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0])
+    if mlp_or_gnn == 'MLP':
+        print('EVAL with MLP!!!')
+        model_config = model_config_mlp
+        print(model_config)
+        total_num_experiments = int(input('How many trials?: '))
+        for num_experiments in range(total_num_experiments):
+            experiment.seed = num_experiments
+            experiment.config.evaluation_episodes = 1
+            experiment._setup_task()
+            experiment.test_env.gnn_exp = False
+            experiment.evaluate()
+    elif mlp_or_gnn == 'GNN':
+        print('EVAL with GNN!!!')
+
+        for param in experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0].parameters():
+            param.requires_grad = False
+        
+        policy_to_explain = copy.deepcopy(experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0])
 
 
-    from torch_geometric.explain import Explainer, GNNExplainer, DummyExplainer, GraphMaskExplainer, AttentionExplainer
+        from torch_geometric.explain import Explainer, GNNExplainer, DummyExplainer, GraphMaskExplainer, AttentionExplainer
 
-    explainer_method = input('Select the explainer method (GraphMask, GNNExplainer, AttentionExplainer): ')
+        explainer_method = input('Select the explainer method (GraphMask, GNNExplainer, AttentionExplainer, DummyExplainer): ')
 
-    if explainer_method == 'GraphMask':
-        explainer_features = Explainer(
-            model=policy_to_explain,
-            algorithm=GraphMaskExplainer(1),
-            explanation_type='model',
-            node_mask_type='object',
-            edge_mask_type='object',
-            model_config=dict(
-                mode='regression',
-                task_level='node'
-            ),
-        )
-    elif explainer_method == 'GNNExplainer':
-        explainer_features = Explainer(
-            model=policy_to_explain,
-            algorithm=GNNExplainer(),
-            explanation_type='model',
-            node_mask_type='object',
-            edge_mask_type='object',
-            model_config=dict(
-                mode='regression',
-                task_level='node'
-            ),
-        )
-    elif explainer_method == 'AttentionExplainer':
-        explainer_features = Explainer(
-            model=policy_to_explain,
-            algorithm=AttentionExplainer(reduce='mean'),
-            explanation_type='model',
-            node_mask_type=None,
-            edge_mask_type='object',
-            model_config=dict(
-                mode='regression',
-                task_level='node'
-            ),
-        )
+        if explainer_method == 'GraphMask':
+            explainer_features = Explainer(
+                model=policy_to_explain,
+                algorithm=GraphMaskExplainer(1, log=False),
+                explanation_type='model',
+                node_mask_type=None,
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='regression',
+                    task_level='node'
+                ),
+            )
+        elif explainer_method == 'GNNExplainer':
+            explainer_features = Explainer(
+                model=policy_to_explain,
+                algorithm=GNNExplainer(),
+                explanation_type='model',
+                node_mask_type=None,
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='regression',
+                    task_level='node'
+                ),
+            )
+        elif explainer_method == 'AttentionExplainer':
+            explainer_features = Explainer(
+                model=policy_to_explain,
+                algorithm=AttentionExplainer(reduce='mean'),
+                explanation_type='model',
+                node_mask_type=None,
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='regression',
+                    task_level='node'
+                ),
+            )
+        elif explainer_method == 'DummyExplainer':
+            explainer_features = Explainer(
+                model=policy_to_explain,
+                algorithm=DummyExplainer(),
+                explanation_type='model',
+                node_mask_type=None,
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='regression',
+                    task_level='node'
+                ),
+            )
+        else:
+            raise Exception('Not a valid input')
+
+        agg_fid_plus = []
+        agg_fid_minus = []
+        agg_delta_fid = []
+        agg_char_scores = []
+        
+        total_num_experiments = int(input('How many trials?: '))
+        verbose_log = input('Verbose log? (yes/no): ').lower() in ('yes','y')
+        experiment.test_env.gnn_exp_info = verbose_log
+
+        for num_experiments in range(total_num_experiments):
+            experiment.seed = num_experiments
+            experiment.config.evaluation_episodes = 1
+            experiment._setup_task()
+
+            # explainer_features.model = copy.deepcopy(experiment.policy.module[0].module[0].module[0].models.module[0].gnns[0])
+            experiment.test_env.explainer_features = explainer_features
+            experiment.test_env.gnn_exp = True
+
+            experiment.test_env.fid_plus = []
+            experiment.test_env.fid_minus = []
+            experiment.test_env.char_scores = []
+            experiment.test_env.delta_fid = []
+
+            experiment.evaluate()
+
+            agg_fid_plus += experiment.test_env.fid_plus
+            agg_fid_minus += experiment.test_env.fid_minus
+            agg_char_scores += experiment.test_env.char_scores
+            agg_delta_fid += experiment.test_env.delta_fid
+
+        d = [agg_fid_plus, agg_fid_minus, agg_delta_fid, agg_char_scores]
+        import csv
+        from itertools import zip_longest
+        export_data = zip_longest(*d, fillvalue = '')
+        with open(explainer_method + '_numbers.csv', 'w', encoding="ISO-8859-1", newline='') as myfile:
+            wr = csv.writer(myfile)
+            wr.writerow(("FidPlus", "FidMinus", "DeltaFid", "CharScore"))
+            wr.writerows(export_data)
+        myfile.close()
+
+        import statistics
+
+        print('Average Fid Plus: ', statistics.mean(agg_fid_plus), '+-', statistics.stdev(agg_fid_plus))
+        print('Average Fid Minus: ', statistics.mean(agg_fid_minus), '+-', statistics.stdev(agg_fid_minus))
+        print('Average Delta Fid: ', statistics.mean(agg_delta_fid), '+-', statistics.stdev(agg_delta_fid))
+        print('Average Characteristic Score: ', statistics.mean(agg_char_scores), '+-', statistics.stdev(agg_char_scores))
     else:
-        raise Exception('Not a valid input')
+        raise Exception('Not valid input')
+    import statistics
+    print('Average Makespan: ', statistics.mean(avg_rollout), '+-', statistics.stdev(avg_rollout))
+    print('Success Rate: ', statistics.mean(success_rate), '+-', statistics.stdev(success_rate))
+    print('No Collision Rate: ', statistics.mean(no_coll_rate), '+-', statistics.stdev(no_coll_rate))
 
-    experiment.config.evaluation_episodes = 1
-    experiment._setup_task()
-
-    experiment.test_env.explainer_features = explainer_features
-    experiment.test_env.gnn_exp = True
-
-    experiment.evaluate()
 else:
     raise Exception('Not valid input')
 
